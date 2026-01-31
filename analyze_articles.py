@@ -50,7 +50,7 @@ You are analyzing a news article for research purposes.
 Return your answer ONLY as valid JSON with this structure:
 
 {{
-  "ideology_score": number from -1 (left) to 1 (right),
+  "ideology_score": "ideology_score": number from 0 (strongly left) to 100 (strongly right), where 50 is neutral,
   "political_leaning": "Left" | "Right" | "Neutral",
   "sentiment": "Positive" | "Negative" | "Neutral",
   "topic": "1-3 word topic label",
