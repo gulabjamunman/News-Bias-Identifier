@@ -18,22 +18,53 @@ HEADERS = {
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 def get_unprocessed_articles():
-    formula = "{Processed} = FALSE()"
-    encoded_formula = requests.utils.quote(formula)
-    url = f"{AIRTABLE_URL}?filterByFormula={encoded_formula}"
-    
-    res = requests.get(url, headers=HEADERS)
+    print("Fetching records from Airtable...")
+
+    res = requests.get(AIRTABLE_URL, headers=HEADERS)
+    print("Status:", res.status_code)
+
     data = res.json()
-    articles = get_unprocessed_articles()
-    if not articles:
-        print("No unprocessed articles found. Check field name or table.")
-    else:
-        print(f"Analyzing {len(articles)} articles...")
-        
-    print("Airtable response status:", res.status_code)
-    print("Records returned:", len(data.get("records", [])))
+    records = data.get("records", [])
+
+    print(f"Total records in table: {len(records)}")
+
+    # Show field names from first record
+    if records:
+        print("Fields in first record:", list(records[0]["fields"].keys()))
+
+    # Now filter manually in Python instead of Airtable formula
+    unprocessed = []
+    for r in records:
+        if not r["fields"].get("Processed"):
+            unprocessed.append(r)
+
+    print(f"Unprocessed records found: {len(unprocessed)}")
+    return unprocessed
+
+articles = get_unprocessed_articles()
+
+if not articles:
+    print("No articles to analyze after filtering.")
+else:
+    print("Starting analysis loop...")
     
-    return data.get("records", [])
+for article in articles:
+    headline = article["fields"].get("Headline")
+    content = article["fields"].get("Content", "")
+
+    print("\nProcessing article:", headline)
+    print("Content length:", len(content))
+
+    if len(content) < 500:
+        print("Skipping — content too short")
+        continue
+
+    print("Sending to OpenAI...")
+    analysis = analyze_article(content)
+    print("Model response received")
+
+    update_record(article["id"], analysis)
+    print("Airtable updated\n")
 
 def analyze_article(text):
     prompt = f"""
