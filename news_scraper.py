@@ -40,7 +40,7 @@ print("Headers ready")
 # TIME FILTER
 # ==============================
 NOW = datetime.now(timezone.utc)
-THREE_HOURS_AGO = NOW - timedelta(hours=12)
+THREE_HOURS_AGO = NOW - timedelta(hours=1)
 
 # ==============================
 # FUNCTIONS
