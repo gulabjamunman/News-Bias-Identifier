@@ -17,6 +17,8 @@ HEADERS = {
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+
+# ---------------- FETCH ARTICLES ----------------
 def get_unprocessed_articles():
     print("Fetching records from Airtable...")
 
@@ -28,11 +30,9 @@ def get_unprocessed_articles():
 
     print(f"Total records in table: {len(records)}")
 
-    # Show field names from first record
     if records:
         print("Fields in first record:", list(records[0]["fields"].keys()))
 
-    # Now filter manually in Python instead of Airtable formula
     unprocessed = []
     for r in records:
         if not r["fields"].get("Processed"):
@@ -41,6 +41,8 @@ def get_unprocessed_articles():
     print(f"Unprocessed records found: {len(unprocessed)}")
     return unprocessed
 
+
+# ---------------- OPENAI ANALYSIS ----------------
 def analyze_article(text):
     prompt = f"""
 You are analyzing a news article for research purposes.
@@ -63,16 +65,38 @@ Article:
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
-        response_format={"type": "json_object"}  # forces JSON output
+        response_format={"type": "json_object"}
     )
 
+    return json.loads(response.choices[0].message.content)
+
+
+# ---------------- UPDATE AIRTABLE ----------------
+def update_record(record_id, analysis):
+    data = {
+        "fields": {
+            "Ideology Score": analysis.get("ideology_score"),
+            "Political Leaning": analysis.get("political_leaning"),
+            "Sentiment": analysis.get("sentiment"),
+            "Topic": analysis.get("topic"),
+            "Bias Explanation": analysis.get("bias_explanation"),
+            "Processed": True
+        }
+    }
+
+    response = requests.patch(f"{AIRTABLE_URL}/{record_id}", headers=HEADERS, json=data)
+    if response.status_code != 200:
+        print("Airtable update error:", response.text)
+
+
+# ---------------- MAIN LOOP ----------------
 articles = get_unprocessed_articles()
 
 if not articles:
     print("No articles to analyze after filtering.")
 else:
     print("Starting analysis loop...")
-    
+
 for article in articles:
     headline = article["fields"].get("Headline")
     content = article["fields"].get("Content", "")
@@ -90,22 +114,3 @@ for article in articles:
 
     update_record(article["id"], analysis)
     print("Airtable updated\n")
-
-def update_record(record_id, analysis):
-    data = {
-        "fields": {
-            "Ideology Score": analysis.get("ideology_score"),
-            "Political Leaning": analysis.get("political_leaning"),
-            "Sentiment": analysis.get("sentiment"),
-            "Topic": analysis.get("topic"),
-            "Bias Explanation": analysis.get("bias_explanation"),
-            "Processed": True
-        }
-    }
-
-    response = requests.patch(f"{AIRTABLE_URL}/{record_id}", headers=HEADERS, json=data)
-    if response.status_code != 200:
-        print("Airtable update error:", response.text)
-
-    analysis= analyze_articles(content)
-    update_record(article["id"], analysis)
