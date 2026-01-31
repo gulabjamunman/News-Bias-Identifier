@@ -18,11 +18,22 @@ HEADERS = {
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 def get_unprocessed_articles():
-    formula = "NOT({Processed})"
-    url = f"{AIRTABLE_URL}?filterByFormula={formula}"
+    formula = "{Processed} = FALSE()"
+    encoded_formula = requests.utils.quote(formula)
+    url = f"{AIRTABLE_URL}?filterByFormula={encoded_formula}"
+    
     res = requests.get(url, headers=HEADERS)
-    return res.json().get("records", [])
-
+    data = res.json()
+    articles = get_unprocessed_articles()
+    if not articles:
+        print("No unprocessed articles found. Check field name or table.")
+    else:
+        print(f"Analyzing {len(articles)} articles...")
+        
+    print("Airtable response status:", res.status_code)
+    print("Records returned:", len(data.get("records", [])))
+    
+    return data.get("records", [])
 
 def analyze_article(text):
     prompt = f"""
