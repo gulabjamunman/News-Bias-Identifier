@@ -2,7 +2,7 @@ name: News Scraper
 
 on:
   schedule:
-    - cron: "0 */8 * * *"   # runs every 8 hours
+    - cron: "0 * * * *"   # runs every hour
   workflow_dispatch:       # allows manual runs too
 
 jobs:
