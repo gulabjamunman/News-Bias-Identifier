@@ -1,5 +1,6 @@
 import os
 import requests
+import json
 from openai import OpenAI
 
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
@@ -22,42 +23,47 @@ def get_unprocessed_articles():
     res = requests.get(url, headers=HEADERS)
     return res.json().get("records", [])
 
+
 def analyze_article(text):
     prompt = f"""
-    Analyze the following news article and return:
-    1. Political leaning (Left, Right, Neutral)
-    2. Overall sentiment (Positive, Negative, Neutral)
-    3. Main topic in 1-3 words
-    4. One-sentence explanation of framing or bias
+You are analyzing a news article for research purposes.
 
-    Article:
-    {text[:4000]}
-    """
+Return your answer ONLY as valid JSON with this structure:
+
+{{
+  "ideology_score": number from -1 (left) to 1 (right),
+  "political_leaning": "Left" | "Right" | "Neutral",
+  "sentiment": "Positive" | "Negative" | "Neutral",
+  "topic": "1-3 word topic label",
+  "bias_explanation": "One concise sentence explaining framing or bias"
+}}
+
+Article:
+{text[:4000]}
+"""
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.2
+        temperature=0.2,
+        response_format={"type": "json_object"}  # forces JSON output
     )
-
-    return response.choices[0].message.content
-
-def update_record(record_id, analysis_text):
+    
+def update_record(record_id, analysis):
     data = {
         "fields": {
-            "Bias Explanation": analysis_text,
+            "Ideology Score": analysis.get("ideology_score"),
+            "Political Leaning": analysis.get("political_leaning"),
+            "Sentiment": analysis.get("sentiment"),
+            "Topic": analysis.get("topic"),
+            "Bias Explanation": analysis.get("bias_explanation"),
             "Processed": True
         }
     }
-    requests.patch(f"{AIRTABLE_URL}/{record_id}", headers=HEADERS, json=data)
 
-articles = get_unprocessed_articles()
+    response = requests.patch(f"{AIRTABLE_URL}/{record_id}", headers=HEADERS, json=data)
+    if response.status_code != 200:
+        print("Airtable update error:", response.text)
 
-for article in articles:
-    content = article["fields"].get("Content", "")
-    if len(content) < 500:
-        continue
-
-    print("Analyzing:", article["fields"].get("Headline"))
-    result = analyze_article(content)
-    update_record(article["id"], result)
+    analysis= analyze_articles(content)
+    update_record(article["id"], analysis)
