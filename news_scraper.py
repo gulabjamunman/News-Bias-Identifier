@@ -1,6 +1,3 @@
-!pip install feedparser newspaper3k python-dateutil requests lxml
-!pip install lxml_html_clean
-!pip install readability-lxml bs4
 import feedparser
 from newspaper import Article
 from datetime import datetime, timedelta, timezone
