@@ -1,16 +1,16 @@
-name: News Scraper
+name: News Scraper + Analyzer Pipeline
 
 on:
   schedule:
-    - cron: "0 * * * *"   # runs every hour
-  workflow_dispatch:       # allows manual runs too
+    - cron: "0 * * * *"   # Runs at the start of every hour (UTC)
+  workflow_dispatch:       # Allows you to run it manually from the Actions tab
 
 jobs:
-  run-scraper:
+  run-pipeline:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Set up Python
@@ -20,9 +20,18 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install feedparser newspaper3k readability-lxml beautifulsoup4 python-dateutil requests lxml_html_clean
+          pip install feedparser newspaper3k readability-lxml beautifulsoup4 python-dateutil requests lxml_html_clean openai
 
-      - name: Run scraper
+      - name: Run news scraper
         run: python news_scraper.py
         env:
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+
+      - name: Wait for Airtable sync (90 seconds)
+        run: sleep 90
+
+      - name: Run article analyzer
+        run: python analyze_articles.py
+        env:
+          AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
