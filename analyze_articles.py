@@ -41,6 +41,31 @@ def get_unprocessed_articles():
     print(f"Unprocessed records found: {len(unprocessed)}")
     return unprocessed
 
+def analyze_article(text):
+    prompt = f"""
+You are analyzing a news article for research purposes.
+
+Return your answer ONLY as valid JSON with this structure:
+
+{{
+  "ideology_score": number from -1 (left) to 1 (right),
+  "political_leaning": "Left" | "Right" | "Neutral",
+  "sentiment": "Positive" | "Negative" | "Neutral",
+  "topic": "1-3 word topic label",
+  "bias_explanation": "One concise sentence explaining framing or bias"
+}}
+
+Article:
+{text[:4000]}
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2,
+        response_format={"type": "json_object"}  # forces JSON output
+    )
+
 articles = get_unprocessed_articles()
 
 if not articles:
@@ -66,31 +91,6 @@ for article in articles:
     update_record(article["id"], analysis)
     print("Airtable updated\n")
 
-def analyze_article(text):
-    prompt = f"""
-You are analyzing a news article for research purposes.
-
-Return your answer ONLY as valid JSON with this structure:
-
-{{
-  "ideology_score": number from -1 (left) to 1 (right),
-  "political_leaning": "Left" | "Right" | "Neutral",
-  "sentiment": "Positive" | "Negative" | "Neutral",
-  "topic": "1-3 word topic label",
-  "bias_explanation": "One concise sentence explaining framing or bias"
-}}
-
-Article:
-{text[:4000]}
-"""
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2,
-        response_format={"type": "json_object"}  # forces JSON output
-    )
-    
 def update_record(record_id, analysis):
     data = {
         "fields": {
