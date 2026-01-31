@@ -26,7 +26,6 @@ RSS_FEEDS = {
 # ==============================
 import os
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
-
 print("Token loaded:", AIRTABLE_TOKEN is not None)
 
 AIRTABLE_BASE_ID = "appNakTUaXtBXu8Vs"
