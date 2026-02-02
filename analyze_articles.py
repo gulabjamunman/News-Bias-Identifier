@@ -104,7 +104,7 @@ for article in articles:
     print("\nProcessing article:", headline)
     print("Content length:", len(content))
 
-    if len(content) < 500:
+    if len(content) < 250:
         print("Skipping — content too short")
         continue
 
