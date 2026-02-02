@@ -15,13 +15,13 @@ RSS_FEEDS = {
     "News18": "https://www.news18.com/commonfeeds/v1/eng/rss/india.xml",
     "NDTV": "https://feeds.feedburner.com/ndtvnews-india-news",
     "Indian Express": "https://indianexpress.com/section/india/feed",
-    "The Hindu": "https://frontline.thehindu.com/the-nation/feeder/default.rss"
-    "FirstPost India": "https://www.firstpost.com/commonfeeds/v1/mfp/rss/india.xml"
-    "ABP India": "https://www.abplive.com/news/india/feed"
-    "Rising Kashmir": "https://risingkashmir.com/feed/"
-    "Storify News": "https://www.storifynews.com/feed/"
-    "DNA India": "https://www.dnaindia.com/feeds/india.xml"
-    "India Today": "https://www.indiatoday.in/rss/1206578"
+    "The Hindu": "https://frontline.thehindu.com/the-nation/feeder/default.rss",
+    "FirstPost India": "https://www.firstpost.com/commonfeeds/v1/mfp/rss/india.xml",
+    "ABP India": "https://www.abplive.com/news/india/feed",
+    "Rising Kashmir": "https://risingkashmir.com/feed/",
+    "Storify News": "https://www.storifynews.com/feed/",
+    "DNA India": "https://www.dnaindia.com/feeds/india.xml",
+    "India Today": "https://www.indiatoday.in/rss/1206578",
 }
 
 # ==============================
