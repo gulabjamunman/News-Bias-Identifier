@@ -28,7 +28,7 @@ jobs:
           AIRTABLE_TOKEN: ${{ secrets.AIRTABLE_TOKEN }}
 
       - name: Wait for Airtable sync (90 seconds)
-        run: sleep 90
+        run: sleep 30
 
       - name: Run article analyzer
         run: python analyze_articles.py
