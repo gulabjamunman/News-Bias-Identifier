@@ -2,6 +2,13 @@ import os
 import requests
 import json
 from openai import OpenAI
+import re
+import csv
+import nltk
+from nltk.sentiment import SentimentIntensityAnalyzer
+
+nltk.download('vader_lexicon')
+sia = SentimentIntensityAnalyzer()
 
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -17,11 +24,93 @@ HEADERS = {
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
+# ---------------- LEXICON LOADS ----------------
+
+SHAPIRO_LEXICON = {}
+with open("shapiro_lexicon.csv", newline='', encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        SHAPIRO_LEXICON[row["word"].lower()] = float(row["score"])
+
+EMOLEX = {}
+with open("NRC-Emotion-Lexicon-Wordlevel-v0.92.txt", encoding="utf-8") as f:
+    for line in f:
+        word, emotion, flag = line.strip().split("\t")
+        if int(flag) == 1:
+            EMOLEX.setdefault(word, set()).add(emotion)
+
+BWS_LEXICON = {}
+with open("bws_emotion_lexicon.csv", newline='', encoding='utf-8') as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        BWS_LEXICON[row["word"].lower()] = float(row["intensity"])
+
+# ---------------- HELPER FUNCTIONS ----------------
+
+def vader_emotional_score(text):
+    return sia.polarity_scores(text)["compound"]
+
+def derive_sentiment_label(text):
+    score = vader_emotional_score(text)
+    if score >= 0.05:
+        return "Positive"
+    elif score <= -0.05:
+        return "Negative"
+    return "Neutral"
+
+def shapiro_economic_score(text):
+    words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
+    total = len(words) or 1
+    score = sum(SHAPIRO_LEXICON.get(w, 0) for w in words)
+    return score / total
+
+def emotion_profile(text):
+    words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
+    emotions = {"anger":0,"fear":0,"trust":0,"joy":0,"disgust":0}
+    for w in words:
+        if w in EMOLEX:
+            for emo in EMOLEX[w]:
+                if emo in emotions:
+                    emotions[emo] += 1
+    total = sum(emotions.values()) or 1
+    return {k: v/total for k, v in emotions.items()}
+
+def bws_intensity_score(text):
+    words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
+    total = len(words) or 1
+    return sum(BWS_LEXICON.get(w, 0) for w in words) / total
+
+def emotional_multiplier(vader_score):
+    return 1 + abs(vader_score) if vader_score < 0 else 1
+
+def economic_multiplier(shapiro_score):
+    return 1 + abs(shapiro_score)*1.5 if shapiro_score < 0 else 1
+
+def threat_multiplier(emotions):
+    return 1 + (emotions["anger"] + emotions["fear"] + emotions["disgust"])*2 - emotions["trust"]
+
+def compute_composite_ideology(framing, intensity, sensationalism, text):
+    vader_score = vader_emotional_score(text)
+    shapiro_score = shapiro_economic_score(text)
+    emotions = emotion_profile(text)
+    bws_score = bws_intensity_score(text)
+
+    base = framing * (0.6 + 0.4 * intensity)
+
+    return base * emotional_multiplier(vader_score) * economic_multiplier(shapiro_score) * threat_multiplier(emotions) * (1 + bws_score)
+
+def derive_political_leaning(framing, shapiro_score):
+    adjusted = framing + (shapiro_score * 0.5)
+    if adjusted > 0.2:
+        return "Right"
+    elif adjusted < -0.2:
+        return "Left"
+    return "Neutral"
 
 # ---------------- FETCH ARTICLES ----------------
+
 def get_unprocessed_articles():
     print("Fetching records from Airtable...")
-
     res = requests.get(AIRTABLE_URL, headers=HEADERS)
     print("Status:", res.status_code)
 
@@ -30,29 +119,21 @@ def get_unprocessed_articles():
 
     print(f"Total records in table: {len(records)}")
 
-    if records:
-        print("Fields in first record:", list(records[0]["fields"].keys()))
-
-    unprocessed = []
-    for r in records:
-        if not r["fields"].get("Processed"):
-            unprocessed.append(r)
-
+    unprocessed = [r for r in records if not r["fields"].get("Processed")]
     print(f"Unprocessed records found: {len(unprocessed)}")
     return unprocessed
 
-
 # ---------------- OPENAI ANALYSIS ----------------
+
 def analyze_article(text):
     prompt = f"""
 You are analyzing a news article for research purposes.
 
-Return your answer ONLY as valid JSON with this structure:
-
+Return JSON with:
 {{
-  "ideology_score": "ideology_score": number from 0 (strongly left) to 100 (strongly right), where 50 is neutral,
-  "political_leaning": "Left" | "Right" | "Neutral",
-  "sentiment": "Positive" | "Negative" | "Neutral",
+  "framing_direction": number from -1 (left) to +1 (right),
+  "language_intensity": number from 0 (neutral tone) to 1 (highly value-laden),
+  "sensationalism_score": number from 0 (not sensational) to 1 (very dramatic),
   "topic": "1-3 word topic label",
   "bias_explanation": "One concise sentence explaining framing or bias"
 }}
@@ -70,16 +151,16 @@ Article:
 
     return json.loads(response.choices[0].message.content)
 
-
 # ---------------- UPDATE AIRTABLE ----------------
-def update_record(record_id, analysis):
+
+def update_record(record_id, composite_score, political_leaning, sentiment_label, topic, bias_explanation):
     data = {
         "fields": {
-            "Ideology Score": analysis.get("ideology_score"),
-            "Political Leaning": analysis.get("political_leaning"),
-            "Sentiment": analysis.get("sentiment"),
-            "Topic": analysis.get("topic"),
-            "Bias Explanation": analysis.get("bias_explanation"),
+            "Composite Ideology Score": composite_score,
+            "Political Leaning": political_leaning,
+            "Sentiment": sentiment_label,
+            "Topic": topic,
+            "Bias Explanation": bias_explanation,
             "Processed": True
         }
     }
@@ -88,8 +169,8 @@ def update_record(record_id, analysis):
     if response.status_code != 200:
         print("Airtable update error:", response.text)
 
-
 # ---------------- MAIN LOOP ----------------
+
 articles = get_unprocessed_articles()
 
 if not articles:
@@ -112,5 +193,21 @@ for article in articles:
     analysis = analyze_article(content)
     print("Model response received")
 
-    update_record(article["id"], analysis)
+    framing = analysis["framing_direction"]
+    intensity = analysis["language_intensity"]
+    sensationalism = analysis["sensationalism_score"]
+
+    composite_score = compute_composite_ideology(framing, intensity, sensationalism, content)
+    sentiment_label = derive_sentiment_label(content)
+    political_leaning = derive_political_leaning(framing, shapiro_economic_score(content))
+
+    update_record(
+        article["id"],
+        composite_score,
+        political_leaning,
+        sentiment_label,
+        analysis.get("topic"),
+        analysis.get("bias_explanation")
+    )
+
     print("Airtable updated\n")
