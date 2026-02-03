@@ -26,49 +26,80 @@ HEADERS = {
 }
 
 client = OpenAI(api_key=OPENAI_API_KEY)
-
 CACHE_FILE = "lexicon_cache.pkl"
+WORD_PATTERN = re.compile(r"\w+", re.UNICODE)
 
 # ---------------- TEXT CLEANING ----------------
 
 def clean_text(text):
     text = text.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"\r", "\n", text)
     return text.strip()
+
 
 def strip_boilerplate(text):
     cut_markers = [
-        "First Published:",
-        "Last Updated:",
-        "Newsletter",
-        "Disclaimer:",
-        "Loading comments"
+        "First Published:", "Last Updated:", "Newsletter",
+        "Disclaimer:", "Loading comments",
+        "News18 Newsletter", "ABP Live", "Follow Us On",
+        "ALSO READ", "Read More", "Advertisement"
     ]
     for marker in cut_markers:
         if marker in text:
             text = text.split(marker)[0]
     return text
 
-# ---------------- LEXICON CACHE SYSTEM ----------------
+
+def normalize_news_article(text):
+    lines = text.split("\n")
+    cleaned_lines = []
+
+    for line in lines:
+        line = line.strip()
+
+        if any(x in line for x in [
+            "Curated By", "Updated:", "Published:", "Last Updated",
+            "Follow us", "Subscribe", "Watch:", "Advertisement",
+            "नई दिल्ली:", "लाइव अपडेट", "Breaking News"
+        ]):
+            continue
+
+        if line.lower().startswith("photo") or line.lower().startswith("image"):
+            continue
+
+        if "pic.twitter.com" in line or ("http" in line and "twitter" in line):
+            continue
+
+        if line.isupper() and len(line.split()) < 12:
+            continue
+
+        if len(line.split()) < 6:
+            continue
+
+        cleaned_lines.append(line)
+
+    article_body = " ".join(cleaned_lines)
+    return re.sub(r"\s+", " ", article_body).strip()
+
+
+def is_probably_hindi(text):
+    return any('\u0900' <= c <= '\u097F' for c in text)
+
+# ---------------- LEXICON CACHING ----------------
 
 def build_lexicons():
-    print("Building lexicons from source files...")
-
-    LM_NEGATIVE = set()
-    LM_UNCERTAINTY = set()
+    LM_NEGATIVE, LM_UNCERTAINTY = set(), set()
 
     with open("LoughranMcDonald_2016.csv", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         reader.fieldnames = [name.lower() for name in reader.fieldnames]
-
         for row in reader:
             word = row.get("word", "").lower()
-            if not word:
-                continue
-            if row.get("negative") and int(row["negative"]) > 0:
-                LM_NEGATIVE.add(word)
-            if row.get("uncertainty") and int(row["uncertainty"]) > 0:
-                LM_UNCERTAINTY.add(word)
+            if word:
+                if row.get("negative") and int(row["negative"]) > 0:
+                    LM_NEGATIVE.add(word)
+                if row.get("uncertainty") and int(row["uncertainty"]) > 0:
+                    LM_UNCERTAINTY.add(word)
 
     EMOLEX = {}
 
@@ -104,24 +135,21 @@ def build_lexicons():
 
 def load_or_build_lexicons():
     if os.path.exists(CACHE_FILE):
-        print("Loading lexicons from cache...")
         with open(CACHE_FILE, "rb") as f:
             return pickle.load(f)
-
     lexicons = build_lexicons()
     with open(CACHE_FILE, "wb") as f:
         pickle.dump(lexicons, f)
-
-    print("Lexicons cached.")
     return lexicons
 
 
 LM_NEGATIVE, LM_UNCERTAINTY, EMOLEX, BWS_LEXICON = load_or_build_lexicons()
 
-# ---------------- ANALYSIS FUNCTIONS ----------------
+# ---------------- SCORING FUNCTIONS ----------------
 
 def vader_emotional_score(text):
     return sia.polarity_scores(text)["compound"]
+
 
 def derive_sentiment_label(text):
     score = vader_emotional_score(text)
@@ -131,28 +159,32 @@ def derive_sentiment_label(text):
         return "Negative"
     return "Neutral"
 
+
 def economic_risk_score(text):
-    words = re.findall(r"\b[\w']+\b", text.lower())
+    words = WORD_PATTERN.findall(text.lower())
     total = len(words) or 1
     neg = sum(1 for w in words if w in LM_NEGATIVE)
     unc = sum(1 for w in words if w in LM_UNCERTAINTY)
     return (neg + 1.5 * unc) / total
 
+
 def emotion_profile(text):
-    words = re.findall(r"\b[\w']+\b", text.lower())
-    emotions = {"anger":0, "fear":0, "trust":0, "joy":0, "disgust":0}
+    words = WORD_PATTERN.findall(text.lower())
+    emotions = {"anger": 0, "fear": 0, "trust": 0, "joy": 0, "disgust": 0}
     for w in words:
         if w in EMOLEX:
             for emo in EMOLEX[w]:
                 if emo in emotions:
                     emotions[emo] += 1
     total = sum(emotions.values()) or 1
-    return {k: v/total for k, v in emotions.items()}
+    return {k: v / total for k, v in emotions.items()}
+
 
 def bws_intensity_score(text):
-    words = re.findall(r"\b[\w']+\b", text.lower())
+    words = WORD_PATTERN.findall(text.lower())
     total = len(words) or 1
     return sum(BWS_LEXICON.get(w, 0) for w in words) / total
+
 
 def compute_composite_ideology(framing, intensity, text):
     vader_score = vader_emotional_score(text)
@@ -167,6 +199,7 @@ def compute_composite_ideology(framing, intensity, text):
 
     return base * emotional_mult * economic_mult * threat_mult * (1 + bws_score)
 
+
 def derive_political_leaning(framing, econ_score):
     adjusted = framing + (econ_score * 0.5)
     if adjusted > 0.2:
@@ -175,17 +208,75 @@ def derive_political_leaning(framing, econ_score):
         return "Left"
     return "Neutral"
 
-# ---------------- OPENAI ----------------
+# ---------------- LLM ANALYSIS ----------------
 
 def analyze_article(text):
     prompt = f"""
-Return JSON with:
+You are analyzing a news article from TWO independent perspectives:
+
+--------------------------------------------------
+PERSPECTIVE 1: POLITICAL FRAMING AND MEDIA BIAS
+--------------------------------------------------
+Your task is to evaluate how the article frames political reality, not whether claims are true.
+
+Right-leaning framing includes language or narratives that:
+- Emphasize nationalism, national security, border control, patriotism
+- Support conservative, market-oriented, or law-and-order positions
+- Defend right-leaning parties or criticize progressive/left parties
+- Frame issues around sovereignty, cultural identity, internal or external threats
+
+Left-leaning framing includes language or narratives that:
+- Emphasize social justice, welfare, minority rights, equality
+- Criticize conservative or nationalist politics from a progressive lens
+- Focus on redistribution, civil liberties, structural inequality
+- Frame issues around marginalization, discrimination, or corporate power
+
+If an article mainly reports statements from a political actor, use the direction of that actor’s framing.
+
+Score:
+- framing_direction from -1 (strongly left-framed) to +1 (strongly right-framed)
+- language_intensity from 0 (calm, factual) to 1 (highly emotional or charged)
+- sensationalism_score from 0 (restrained reporting) to 1 (dramatic or exaggerated)
+
+--------------------------------------------------
+PERSPECTIVE 2: BEHAVIOURAL INFLUENCE ON READERS
+--------------------------------------------------
+Now analyze psychological influence patterns in the article.
+
+Explain:
+- What the article makes salient or attention-grabbing
+- What emotions it may evoke (fear, anger, pride, hope, outrage, empathy)
+- Whether it invokes group identity or "us vs them" cues
+- Whether it creates urgency, blame, reassurance, pride, or concern
+
+You are not judging correctness. You are identifying influence patterns in language and framing.
+
+--------------------------------------------------
+OUTPUT FORMAT
+--------------------------------------------------
+
+Return ONLY valid JSON with this structure:
+
 {{
-  "framing_direction": number from -1 to +1,
-  "language_intensity": number from 0 to 1,
-  "sensationalism_score": number from 0 to 1,
+  "framing_direction": number,
+  "language_intensity": number,
+  "sensationalism_score": number,
   "topic": "1-3 word topic label",
-  "bias_explanation": "One concise sentence explaining framing or bias"
+
+  "bias_explanation": {{
+      "framing_reason": "",
+      "intensity_reason": "",
+      "sensationalism_reason": "",
+      "overall_interpretation": ""
+  }},
+
+  "behavioural_analysis": {{
+      "attention_and_salience": "",
+      "emotional_triggers": "",
+      "social_and_identity_cues": "",
+      "motivation_and_action_signals": "",
+      "overall_behavioural_interpretation": ""
+  }}
 }}
 
 Article:
@@ -199,65 +290,73 @@ Article:
     )
     return json.loads(response.choices[0].message.content)
 
+# ---------------- FORMATTERS ----------------
+
+def format_bias_explanation(e):
+    return (
+        f"Framing: {e.get('framing_reason','')}\n\n"
+        f"Language Intensity: {e.get('intensity_reason','')}\n\n"
+        f"Sensationalism: {e.get('sensationalism_reason','')}\n\n"
+        f"Overall Interpretation: {e.get('overall_interpretation','')}"
+    )
+
+
+def format_behavioural_explanation(b):
+    return (
+        f"Attention & Salience: {b.get('attention_and_salience','')}\n\n"
+        f"Emotional Triggers: {b.get('emotional_triggers','')}\n\n"
+        f"Social & Identity Cues: {b.get('social_and_identity_cues','')}\n\n"
+        f"Motivation Signals: {b.get('motivation_and_action_signals','')}\n\n"
+        f"Overall Behavioural Interpretation: {b.get('overall_behavioural_interpretation','')}"
+    )
+
 # ---------------- AIRTABLE ----------------
 
 def get_unprocessed_articles():
-    records = []
-    offset = None
-
+    records, offset = [], None
     while True:
         params = {"offset": offset} if offset else {}
         res = requests.get(AIRTABLE_URL, headers=HEADERS, params=params)
         data = res.json()
-
         records.extend(data.get("records", []))
         offset = data.get("offset")
         if not offset:
             break
-
     return [r for r in records if not r["fields"].get("Processed")]
 
+
 def update_record(record_id, fields):
-    response = requests.patch(
-        f"{AIRTABLE_URL}/{record_id}",
-        headers=HEADERS,
-        json={"fields": fields}
-    )
-    if response.status_code != 200:
-        print("Airtable update error:", response.text)
+    requests.patch(f"{AIRTABLE_URL}/{record_id}", headers=HEADERS, json={"fields": fields})
 
 # ---------------- MAIN ----------------
 
 def main():
     articles = get_unprocessed_articles()
 
-    if not articles:
-        print("No articles to analyze.")
-        return
-
     for article in articles:
         headline = article["fields"].get("Headline", "Untitled")
-        content = article["fields"].get("Content", "")
+        raw_content = article["fields"].get("Content", "")
+        content = normalize_news_article(strip_boilerplate(clean_text(raw_content)))
 
-        content = clean_text(content)
-        content = strip_boilerplate(content)
-
-        print(f"\nProcessing: {headline}")
-
-        words = re.findall(r"\b[\w']+\b", content)
-        if len(words) < 40:
-            print("Skipped, too short after cleaning.")
+        if len(WORD_PATTERN.findall(content)) < 40:
             continue
 
         try:
             analysis = analyze_article(content)
+            formatted_bias = format_bias_explanation(analysis["bias_explanation"])
+            formatted_behaviour = format_behavioural_explanation(analysis["behavioural_analysis"])
 
             framing = analysis["framing_direction"]
             intensity = analysis["language_intensity"]
 
+            if is_probably_hindi(content):
+                sentiment_label = "Neutral"
+                econ_score = 0
+            else:
+                sentiment_label = derive_sentiment_label(content)
+                econ_score = economic_risk_score(content)
+
             composite_score = compute_composite_ideology(framing, intensity, content)
-            sentiment_label = derive_sentiment_label(content)
-            econ_score = economic_risk_score(content)
             political_leaning = derive_political_leaning(framing, econ_score)
 
             update_record(article["id"], {
@@ -265,16 +364,15 @@ def main():
                 "Political Leaning": political_leaning,
                 "Sentiment": sentiment_label,
                 "Topic": analysis["topic"],
-                "Bias Explanation": analysis["bias_explanation"],
+                "Bias Explanation": formatted_bias,
+                "Behavioural Analysis": formatted_behaviour,
                 "Processed": True
             })
 
-            print("Success")
+            print(f"Processed: {headline}")
 
         except Exception as e:
-            print(f"Failed: {headline}")
-            print("Reason:", e)
-            print("Preview:", content[:300])
+            print(f"Failed: {headline}", e)
 
 
 if __name__ == "__main__":
