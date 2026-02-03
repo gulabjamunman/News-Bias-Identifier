@@ -26,39 +26,31 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ---------------- LEXICON LOADS ----------------
 
-# Loughran–McDonald Financial Sentiment
 LM_NEGATIVE = set()
 LM_UNCERTAINTY = set()
 
 with open("LoughranMcDonald_2016.csv", newline='', encoding='utf-8') as f:
     reader = csv.DictReader(f)
-
-    # Normalize column names to lowercase
     reader.fieldnames = [name.lower() for name in reader.fieldnames]
 
     for row in reader:
         row = {k.lower(): v for k, v in row.items()}
-
         word = row.get("word")
         if not word:
             continue
-
         word = word.lower()
 
         if row.get("negative") and int(row["negative"]) > 0:
             LM_NEGATIVE.add(word)
-
         if row.get("uncertainty") and int(row["uncertainty"]) > 0:
             LM_UNCERTAINTY.add(word)
 
-# NRC Emotion Lexicons (English + Hindi)
 EMOLEX = {}
 
 def load_emolex(path):
     with open(path, encoding="utf-8") as f:
         header = f.readline().strip().split("\t")
 
-        # Case 1: Word–Emotion–Flag format (English style)
         if len(header) == 3:
             f.seek(0)
             for line in f:
@@ -68,22 +60,21 @@ def load_emolex(path):
                 word, emotion, flag = parts
                 if flag == "1":
                     EMOLEX.setdefault(word.lower(), set()).add(emotion)
-
-        # Case 2: Matrix format (Hindi style)
         else:
-            emotions = header[1:]  # skip the word column
+            emotions = header[1:]
             for line in f:
                 parts = line.strip().split("\t")
                 if len(parts) != len(header):
                     continue
                 word = parts[0].lower()
                 flags = parts[1:]
-
                 for emotion, flag in zip(emotions, flags):
                     if flag == "1":
                         EMOLEX.setdefault(word, set()).add(emotion)
 
-# NRC Emotion Intensity (Best-Worst Scaling)
+load_emolex("NRC-Emotion-Lexicon-Wordlevel-v0.92.txt")
+load_emolex("Hindi-NRC-EmoLex.txt")
+
 BWS_LEXICON = {}
 with open("NRC-Emotion-Intensity-Lexicon-v1.txt", encoding="utf-8") as f:
     for line in f:
@@ -142,7 +133,6 @@ def compute_composite_ideology(framing, intensity, sensationalism, text):
     bws_score = bws_intensity_score(text)
 
     base = framing * (0.6 + 0.4 * intensity)
-
     return base * emotional_multiplier(vader_score) * economic_multiplier(econ_score) * threat_multiplier(emotions) * (1 + bws_score)
 
 def derive_political_leaning(framing, econ_score):
@@ -181,19 +171,17 @@ Return JSON with:
 Article:
 {text[:4000]}
 """
-
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2,
         response_format={"type": "json_object"}
     )
-
     return json.loads(response.choices[0].message.content)
 
 # ---------------- UPDATE AIRTABLE ----------------
 
-def update_record(record_id, composite_score, political_leaning, sentiment_label, topic, bias_explanation):
+def update_record(record_id, composite_score, political_leaning, sentiment_label, topic, bias_explanation, headline):
     data = {
         "fields": {
             "Composite Ideology Score": composite_score,
@@ -204,10 +192,9 @@ def update_record(record_id, composite_score, political_leaning, sentiment_label
             "Processed": True
         }
     }
-
     response = requests.patch(f"{AIRTABLE_URL}/{record_id}", headers=HEADERS, json=data)
     if response.status_code != 200:
-        print("Airtable update error:", response.text)
+        print(f"AIRTABLE ERROR for '{headline}':", response.text)
 
 # ---------------- MAIN LOOP ----------------
 
@@ -222,22 +209,30 @@ for article in articles:
     headline = article["fields"].get("Headline")
     content = article["fields"].get("Content", "")
 
-    print("\nProcessing article:", headline)
+    print(f"\n---\nTITLE: {headline}\nLENGTH: {len(content)}")
 
-    if len(content) < 250:
-        print("Skipping — content too short")
+    if not content or len(content.strip()) < 250:
+        print(f"SKIPPED: Too short → {headline}")
         continue
 
-    analysis = analyze_article(content)
+    try:
+        analysis = analyze_article(content)
+    except Exception as e:
+        print(f"OPENAI ERROR for '{headline}': {e}")
+        continue
 
-    framing = analysis["framing_direction"]
-    intensity = analysis["language_intensity"]
-    sensationalism = analysis["sensationalism_score"]
+    try:
+        framing = analysis["framing_direction"]
+        intensity = analysis["language_intensity"]
+        sensationalism = analysis["sensationalism_score"]
 
-    composite_score = compute_composite_ideology(framing, intensity, sensationalism, content)
-    sentiment_label = derive_sentiment_label(content)
-    econ_score = economic_risk_score(content)
-    political_leaning = derive_political_leaning(framing, econ_score)
+        composite_score = compute_composite_ideology(framing, intensity, sensationalism, content)
+        sentiment_label = derive_sentiment_label(content)
+        econ_score = economic_risk_score(content)
+        political_leaning = derive_political_leaning(framing, econ_score)
+    except Exception as e:
+        print(f"SCORING ERROR for '{headline}': {e}")
+        continue
 
     update_record(
         article["id"],
@@ -245,7 +240,8 @@ for article in articles:
         political_leaning,
         sentiment_label,
         analysis.get("topic"),
-        analysis.get("bias_explanation")
+        analysis.get("bias_explanation"),
+        headline
     )
 
-    print("Airtable updated")
+    print(f"SUCCESS: {headline}")
