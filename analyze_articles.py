@@ -211,9 +211,23 @@ for article in articles:
 
     print(f"\n---\nTITLE: {headline}\nLENGTH: {len(content)}")
 
-    if not content or len(content.strip()) < 250:
-        print(f"SKIPPED: Too short → {headline}")
+    if not content:
+        print(f"SKIPPED: No content → {headline}")
         continue
+
+    word_count = len(re.findall(r"\b[\w']+\b", content))
+    print(f"WORD COUNT: {word_count}")
+
+    if word_count < 40:
+        print(f"SKIPPED: Too few words ({word_count}) → {headline}")
+        continue
+
+word_count = len(re.findall(r"\b[\w']+\b", content))
+print(f"WORD COUNT: {word_count}")
+
+if word_count < 40:
+    print(f"SKIPPED: Too few words ({word_count}) → {headline}")
+    continue
 
     try:
         analysis = analyze_article(content)
