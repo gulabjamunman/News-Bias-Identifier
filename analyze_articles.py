@@ -26,6 +26,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ---------------- LEXICON LOADS ----------------
 
+# Loughran–McDonald Financial Sentiment
 LM_NEGATIVE = set()
 LM_UNCERTAINTY = set()
 
@@ -38,18 +39,25 @@ with open("LoughranMcDonald_2016.csv", newline='', encoding='utf-8') as f:
         if int(row["Uncertainty"]) > 0:
             LM_UNCERTAINTY.add(word)
 
+# NRC Emotion Lexicons (English + Hindi)
 EMOLEX = {}
-with open("NRC-Emotion-Lexicon-Wordlevel-v0.92.txt", encoding="utf-8") as f:
-    for line in f:
-        word, emotion, flag = line.strip().split("\t")
-        if int(flag) == 1:
-            EMOLEX.setdefault(word, set()).add(emotion)
 
+def load_emolex(path):
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            word, emotion, flag = line.strip().split("\t")
+            if int(flag) == 1:
+                EMOLEX.setdefault(word.lower(), set()).add(emotion)
+
+load_emolex("NRC-Emotion-Lexicon-Wordlevel-v0.92.txt")
+load_emolex("NRC-Emotion-Lexicon-Hindi.txt")
+
+# NRC Emotion Intensity (Best-Worst Scaling)
 BWS_LEXICON = {}
-with open("bws_emotion_lexicon.csv", newline='', encoding='utf-8') as f:
-    reader = csv.DictReader(f)
-    for row in reader:
-        BWS_LEXICON[row["word"].lower()] = float(row["intensity"])
+with open("bws_emotion_lexicon.csv", encoding="utf-8") as f:
+    for line in f:
+        word, emotion, score = line.strip().split("\t")
+        BWS_LEXICON[word.lower()] = float(score)
 
 # ---------------- HELPER FUNCTIONS ----------------
 
@@ -65,16 +73,14 @@ def derive_sentiment_label(text):
     return "Neutral"
 
 def economic_risk_score(text):
-    words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
+    words = re.findall(r"\b[\w']+\b", text.lower())
     total = len(words) or 1
-
     neg = sum(1 for w in words if w in LM_NEGATIVE)
     unc = sum(1 for w in words if w in LM_UNCERTAINTY)
-
-    return (neg * 1.0 + unc * 1.5) / total
+    return (neg + 1.5 * unc) / total
 
 def emotion_profile(text):
-    words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
+    words = re.findall(r"\b[\w']+\b", text.lower())
     emotions = {"anger":0,"fear":0,"trust":0,"joy":0,"disgust":0}
     for w in words:
         if w in EMOLEX:
@@ -85,7 +91,7 @@ def emotion_profile(text):
     return {k: v/total for k, v in emotions.items()}
 
 def bws_intensity_score(text):
-    words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
+    words = re.findall(r"\b[\w']+\b", text.lower())
     total = len(words) or 1
     return sum(BWS_LEXICON.get(w, 0) for w in words) / total
 
@@ -122,12 +128,8 @@ def get_unprocessed_articles():
     print("Fetching records from Airtable...")
     res = requests.get(AIRTABLE_URL, headers=HEADERS)
     print("Status:", res.status_code)
-
     data = res.json()
     records = data.get("records", [])
-
-    print(f"Total records in table: {len(records)}")
-
     unprocessed = [r for r in records if not r["fields"].get("Processed")]
     print(f"Unprocessed records found: {len(unprocessed)}")
     return unprocessed
@@ -136,13 +138,11 @@ def get_unprocessed_articles():
 
 def analyze_article(text):
     prompt = f"""
-You are analyzing a news article for research purposes.
-
 Return JSON with:
 {{
   "framing_direction": number from -1 (left) to +1 (right),
-  "language_intensity": number from 0 (neutral tone) to 1 (highly value-laden),
-  "sensationalism_score": number from 0 (not sensational) to 1 (very dramatic),
+  "language_intensity": number from 0 to 1,
+  "sensationalism_score": number from 0 to 1,
   "topic": "1-3 word topic label",
   "bias_explanation": "One concise sentence explaining framing or bias"
 }}
@@ -183,7 +183,7 @@ def update_record(record_id, composite_score, political_leaning, sentiment_label
 articles = get_unprocessed_articles()
 
 if not articles:
-    print("No articles to analyze after filtering.")
+    print("No articles to analyze.")
 else:
     print("Starting analysis loop...")
 
@@ -192,15 +192,12 @@ for article in articles:
     content = article["fields"].get("Content", "")
 
     print("\nProcessing article:", headline)
-    print("Content length:", len(content))
 
     if len(content) < 250:
         print("Skipping — content too short")
         continue
 
-    print("Sending to OpenAI...")
     analysis = analyze_article(content)
-    print("Model response received")
 
     framing = analysis["framing_direction"]
     intensity = analysis["language_intensity"]
@@ -208,7 +205,8 @@ for article in articles:
 
     composite_score = compute_composite_ideology(framing, intensity, sensationalism, content)
     sentiment_label = derive_sentiment_label(content)
-    political_leaning = derive_political_leaning(framing, shapiro_economic_score(content))
+    econ_score = economic_risk_score(content)
+    political_leaning = derive_political_leaning(framing, econ_score)
 
     update_record(
         article["id"],
@@ -219,4 +217,4 @@ for article in articles:
         analysis.get("bias_explanation")
     )
 
-    print("Airtable updated\n")
+    print("Airtable updated")
