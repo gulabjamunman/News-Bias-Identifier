@@ -32,11 +32,23 @@ LM_UNCERTAINTY = set()
 
 with open("LoughranMcDonald_2016.csv", newline='', encoding='utf-8') as f:
     reader = csv.DictReader(f)
+
+    # Normalize column names to lowercase
+    reader.fieldnames = [name.lower() for name in reader.fieldnames]
+
     for row in reader:
-        word = row["Word"].lower()
-        if int(row["Negative"]) > 0:
+        row = {k.lower(): v for k, v in row.items()}
+
+        word = row.get("word")
+        if not word:
+            continue
+
+        word = word.lower()
+
+        if row.get("negative") and int(row["negative"]) > 0:
             LM_NEGATIVE.add(word)
-        if int(row["Uncertainty"]) > 0:
+
+        if row.get("uncertainty") and int(row["uncertainty"]) > 0:
             LM_UNCERTAINTY.add(word)
 
 # NRC Emotion Lexicons (English + Hindi)
