@@ -56,13 +56,32 @@ EMOLEX = {}
 
 def load_emolex(path):
     with open(path, encoding="utf-8") as f:
-        for line in f:
-            word, emotion, flag = line.strip().split("\t")
-            if int(flag) == 1:
-                EMOLEX.setdefault(word.lower(), set()).add(emotion)
+        header = f.readline().strip().split("\t")
 
-load_emolex("NRC-Emotion-Lexicon-Wordlevel-v0.92.txt")
-load_emolex("Hindi-NRC-EmoLex.txt")
+        # Case 1: Word–Emotion–Flag format (English style)
+        if len(header) == 3:
+            f.seek(0)
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) != 3:
+                    continue
+                word, emotion, flag = parts
+                if flag == "1":
+                    EMOLEX.setdefault(word.lower(), set()).add(emotion)
+
+        # Case 2: Matrix format (Hindi style)
+        else:
+            emotions = header[1:]  # skip the word column
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) != len(header):
+                    continue
+                word = parts[0].lower()
+                flags = parts[1:]
+
+                for emotion, flag in zip(emotions, flags):
+                    if flag == "1":
+                        EMOLEX.setdefault(word, set()).add(emotion)
 
 # NRC Emotion Intensity (Best-Worst Scaling)
 BWS_LEXICON = {}
