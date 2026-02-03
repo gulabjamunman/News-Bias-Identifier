@@ -62,7 +62,7 @@ def load_emolex(path):
                 EMOLEX.setdefault(word.lower(), set()).add(emotion)
 
 load_emolex("NRC-Emotion-Lexicon-Wordlevel-v0.92.txt")
-load_emolex("NRC-Emotion-Lexicon-Hindi.txt")
+load_emolex("Hindi-NRC-EmoLex.txt")
 
 # NRC Emotion Intensity (Best-Worst Scaling)
 BWS_LEXICON = {}
