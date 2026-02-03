@@ -26,11 +26,17 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ---------------- LEXICON LOADS ----------------
 
-SHAPIRO_LEXICON = {}
-with open("shapiro_lexicon.csv", newline='', encoding='utf-8') as f:
+LM_NEGATIVE = set()
+LM_UNCERTAINTY = set()
+
+with open("LoughranMcDonald_2016.csv", newline='', encoding='utf-8') as f:
     reader = csv.DictReader(f)
     for row in reader:
-        SHAPIRO_LEXICON[row["word"].lower()] = float(row["score"])
+        word = row["Word"].lower()
+        if int(row["Negative"]) > 0:
+            LM_NEGATIVE.add(word)
+        if int(row["Uncertainty"]) > 0:
+            LM_UNCERTAINTY.add(word)
 
 EMOLEX = {}
 with open("NRC-Emotion-Lexicon-Wordlevel-v0.92.txt", encoding="utf-8") as f:
@@ -58,11 +64,14 @@ def derive_sentiment_label(text):
         return "Negative"
     return "Neutral"
 
-def shapiro_economic_score(text):
+def economic_risk_score(text):
     words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
     total = len(words) or 1
-    score = sum(SHAPIRO_LEXICON.get(w, 0) for w in words)
-    return score / total
+
+    neg = sum(1 for w in words if w in LM_NEGATIVE)
+    unc = sum(1 for w in words if w in LM_UNCERTAINTY)
+
+    return (neg * 1.0 + unc * 1.5) / total
 
 def emotion_profile(text):
     words = re.findall(r"\b[a-zA-Z]+\b", text.lower())
@@ -83,24 +92,24 @@ def bws_intensity_score(text):
 def emotional_multiplier(vader_score):
     return 1 + abs(vader_score) if vader_score < 0 else 1
 
-def economic_multiplier(shapiro_score):
-    return 1 + abs(shapiro_score)*1.5 if shapiro_score < 0 else 1
+def economic_multiplier(econ_score):
+    return 1 + econ_score * 5
 
 def threat_multiplier(emotions):
     return 1 + (emotions["anger"] + emotions["fear"] + emotions["disgust"])*2 - emotions["trust"]
 
 def compute_composite_ideology(framing, intensity, sensationalism, text):
     vader_score = vader_emotional_score(text)
-    shapiro_score = shapiro_economic_score(text)
+    econ_score = economic_risk_score(text)
     emotions = emotion_profile(text)
     bws_score = bws_intensity_score(text)
 
     base = framing * (0.6 + 0.4 * intensity)
 
-    return base * emotional_multiplier(vader_score) * economic_multiplier(shapiro_score) * threat_multiplier(emotions) * (1 + bws_score)
+    return base * emotional_multiplier(vader_score) * economic_multiplier(econ_score) * threat_multiplier(emotions) * (1 + bws_score)
 
-def derive_political_leaning(framing, shapiro_score):
-    adjusted = framing + (shapiro_score * 0.5)
+def derive_political_leaning(framing, econ_score):
+    adjusted = framing + (econ_score * 0.5)
     if adjusted > 0.2:
         return "Right"
     elif adjusted < -0.2:
