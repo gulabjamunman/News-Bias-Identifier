@@ -29,6 +29,26 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 
 CACHE_FILE = "lexicon_cache.pkl"
 
+# ---------------- TEXT CLEANING ----------------
+
+def clean_text(text):
+    text = text.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+def strip_boilerplate(text):
+    cut_markers = [
+        "First Published:",
+        "Last Updated:",
+        "Newsletter",
+        "Disclaimer:",
+        "Loading comments"
+    ]
+    for marker in cut_markers:
+        if marker in text:
+            text = text.split(marker)[0]
+    return text
+
 # ---------------- LEXICON CACHE SYSTEM ----------------
 
 def build_lexicons():
@@ -55,7 +75,6 @@ def build_lexicons():
     def load_emolex(path):
         with open(path, encoding="utf-8") as f:
             header = f.readline().strip().split("\t")
-
             if len(header) == 3:
                 f.seek(0)
                 for line in f:
@@ -93,7 +112,7 @@ def load_or_build_lexicons():
     with open(CACHE_FILE, "wb") as f:
         pickle.dump(lexicons, f)
 
-    print("Lexicons cached for future runs.")
+    print("Lexicons cached.")
     return lexicons
 
 
@@ -156,7 +175,7 @@ def derive_political_leaning(framing, econ_score):
         return "Left"
     return "Neutral"
 
-# ---------------- OPENAI ANALYSIS ----------------
+# ---------------- OPENAI ----------------
 
 def analyze_article(text):
     prompt = f"""
@@ -183,9 +202,20 @@ Article:
 # ---------------- AIRTABLE ----------------
 
 def get_unprocessed_articles():
-    res = requests.get(AIRTABLE_URL, headers=HEADERS)
-    data = res.json()
-    return [r for r in data.get("records", []) if not r["fields"].get("Processed")]
+    records = []
+    offset = None
+
+    while True:
+        params = {"offset": offset} if offset else {}
+        res = requests.get(AIRTABLE_URL, headers=HEADERS, params=params)
+        data = res.json()
+
+        records.extend(data.get("records", []))
+        offset = data.get("offset")
+        if not offset:
+            break
+
+    return [r for r in records if not r["fields"].get("Processed")]
 
 def update_record(record_id, fields):
     response = requests.patch(
@@ -196,7 +226,7 @@ def update_record(record_id, fields):
     if response.status_code != 200:
         print("Airtable update error:", response.text)
 
-# ---------------- MAIN PIPELINE ----------------
+# ---------------- MAIN ----------------
 
 def main():
     articles = get_unprocessed_articles()
@@ -209,11 +239,14 @@ def main():
         headline = article["fields"].get("Headline", "Untitled")
         content = article["fields"].get("Content", "")
 
+        content = clean_text(content)
+        content = strip_boilerplate(content)
+
         print(f"\nProcessing: {headline}")
 
         words = re.findall(r"\b[\w']+\b", content)
         if len(words) < 40:
-            print("Skipped, too short.")
+            print("Skipped, too short after cleaning.")
             continue
 
         try:
@@ -239,7 +272,9 @@ def main():
             print("Success")
 
         except Exception as e:
-            print("Error processing article:", e)
+            print(f"Failed: {headline}")
+            print("Reason:", e)
+            print("Preview:", content[:300])
 
 
 if __name__ == "__main__":
