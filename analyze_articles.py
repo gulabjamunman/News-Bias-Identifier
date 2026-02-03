@@ -85,7 +85,7 @@ def load_emolex(path):
 
 # NRC Emotion Intensity (Best-Worst Scaling)
 BWS_LEXICON = {}
-with open("bws_emotion_lexicon.csv", encoding="utf-8") as f:
+with open("NRC-Emotion-Intensity-Lexicon-v1.txt", encoding="utf-8") as f:
     for line in f:
         word, emotion, score = line.strip().split("\t")
         BWS_LEXICON[word.lower()] = float(score)
