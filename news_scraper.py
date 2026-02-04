@@ -6,6 +6,9 @@ import requests
 import time
 import os
 import urllib.parse
+from readability import Document
+from bs4 import BeautifulSoup
+
 # ==============================
 # RSS FEEDS
 # ==============================
@@ -27,10 +30,7 @@ RSS_FEEDS = {
 # ==============================
 # AIRTABLE CONFIG
 # ==============================
-import os
 AIRTABLE_TOKEN = os.getenv("AIRTABLE_TOKEN")
-print("Token loaded:", AIRTABLE_TOKEN is not None)
-
 AIRTABLE_BASE_ID = "appNakTUaXtBXu8Vs"
 AIRTABLE_TABLE_NAME = "Data1"
 
@@ -40,38 +40,31 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
-print("Headers ready")
+print("Airtable token loaded:", AIRTABLE_TOKEN is not None)
 
 # ==============================
-# TIME FILTER
+# TIME FILTER (last 6 hours)
 # ==============================
 NOW = datetime.now(timezone.utc)
-THREE_HOURS_AGO = NOW - timedelta(hours=1)
+TIME_WINDOW = NOW - timedelta(hours=6)
 
 # ==============================
-# FUNCTIONS
+# ARTICLE EXTRACTION
 # ==============================
-from readability import Document
-from bs4 import BeautifulSoup
-import requests
-
 def extract_article_text(url):
     try:
-        # First attempt: newspaper3k
-        article = Article(url)
+        article = Article(url, request_timeout=10)
         article.download()
         article.parse()
         text = article.text.strip()
 
-        # If newspaper3k failed (very short text), use fallback
         if len(text) < 500:
-            print("Fallback extractor used for:", url)
+            print("Using fallback extractor:", url)
             response = requests.get(url, timeout=10)
             doc = Document(response.text)
             html = doc.summary()
             soup = BeautifulSoup(html, "html.parser")
 
-            # Remove scripts/styles
             for tag in soup(["script", "style", "aside", "header", "footer", "nav"]):
                 tag.decompose()
 
@@ -83,7 +76,9 @@ def extract_article_text(url):
         print(f"Failed to parse article: {url} | Error: {e}")
         return None, []
 
-
+# ==============================
+# AIRTABLE HELPERS
+# ==============================
 def sanitize_record(data):
     cleaned = {}
     for k, v in data.items():
@@ -93,13 +88,16 @@ def sanitize_record(data):
             cleaned[k] = v
     return cleaned
 
+
 def url_exists(article_url):
-    safe_url = article_url.replace("'", "\\'")
+    safe_url = article_url.replace("\\", "\\\\").replace("'", "\\'")
     formula = f"{{URL}} = '{safe_url}'"
     encoded_formula = urllib.parse.quote(formula)
     lookup_url = f"{AIRTABLE_URL}?filterByFormula={encoded_formula}"
 
     response = requests.get(lookup_url, headers=HEADERS)
+    print("Lookup status:", response.status_code)
+
     if response.status_code != 200:
         print("Airtable lookup error:", response.text)
         return False
@@ -107,9 +105,12 @@ def url_exists(article_url):
     records = response.json().get("records", [])
     return len(records) > 0
 
+
 def push_to_airtable(data):
-    data = sanitize_record(data)  # FINAL CLEANING STEP
+    data = sanitize_record(data)
     response = requests.post(AIRTABLE_URL, headers=HEADERS, json={"fields": data})
+    print("Upload status:", response.status_code)
+
     if response.status_code != 200:
         print("Airtable error:", response.text)
     else:
@@ -125,26 +126,27 @@ for publisher, feed_url in RSS_FEEDS.items():
     recent_articles = []
 
     for entry in feed.entries:
-        if not hasattr(entry, "published"):
+        published_raw = getattr(entry, "published", None) or getattr(entry, "updated", None)
+        if not published_raw:
             continue
 
         try:
-            published_time = dateparser.parse(entry.published).astimezone(timezone.utc)
+            published_time = dateparser.parse(published_raw).astimezone(timezone.utc)
         except:
             continue
 
-        if published_time >= THREE_HOURS_AGO:
+        if published_time >= TIME_WINDOW:
             recent_articles.append((published_time, entry))
 
-    # Sort newest first and take top 3
+    print(f"{publisher} recent articles found:", len(recent_articles))
+
     recent_articles.sort(reverse=True, key=lambda x: x[0])
     top_three = recent_articles[:3]
 
     for pub_time, entry in top_three:
         url = entry.link
         headline = entry.title
-
-        print(f"Scraping: {headline}")
+        print("Scraping:", headline)
 
         content, authors = extract_article_text(url)
         if not content:
@@ -153,15 +155,15 @@ for publisher, feed_url in RSS_FEEDS.items():
         record = {
             "Author": ", ".join(authors) if authors else "",
             "Publisher Name": publisher,
-            "Publication Date & Time": pub_time.isoformat(),
+            "Publication Date & Time": pub_time.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
             "Headline": headline,
             "Content": content[:100000],
             "URL": url
         }
 
         if url_exists(record["URL"]):
-           print("Duplicate skipped (URL exists):", record["URL"])
+            print("Duplicate skipped:", record["URL"])
         else:
-           push_to_airtable(record)
-           
+            push_to_airtable(record)
+
         time.sleep(1)
