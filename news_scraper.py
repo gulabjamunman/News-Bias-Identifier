@@ -151,7 +151,6 @@ for publisher, feed_url in RSS_FEEDS.items():
             continue
 
         record = {
-            "Article ID": "",
             "Author": ", ".join(authors) if authors else "",
             "Publisher Name": publisher,
             "Publication Date & Time": pub_time.isoformat(),
