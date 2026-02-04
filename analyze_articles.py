@@ -176,7 +176,6 @@ def bws_intensity_score(text):
     total = len(words) or 1
     return sum(BWS_LEXICON.get(w, 0) for w in words) / total
 
-# 🆕 NEW helper (only addition here)
 def threat_signal_score(text):
     emotions = emotion_profile(text)
     return emotions["anger"] + emotions["fear"] + emotions["disgust"]
@@ -202,7 +201,35 @@ def derive_political_leaning(framing, econ_score):
         return "Left"
     return "Neutral"
 
-# ---------------- LLM ANALYSIS ----------------
+# ---------------- NEW FORMATTING HELPERS ----------------
+
+def format_bias_explanation(bias):
+    return (
+        "FRAMING\n"
+        f"{bias.get('framing_reason', '').strip()}\n\n"
+        "LANGUAGE INTENSITY\n"
+        f"{bias.get('intensity_reason', '').strip()}\n\n"
+        "SENSATIONALISM\n"
+        f"{bias.get('sensationalism_reason', '').strip()}\n\n"
+        "OVERALL INTERPRETATION\n"
+        f"{bias.get('overall_interpretation', '').strip()}"
+    )
+
+def format_behavioural_analysis(behaviour):
+    return (
+        "ATTENTION AND SALIENCE\n"
+        f"{behaviour.get('attention_and_salience', '').strip()}\n\n"
+        "EMOTIONAL TRIGGERS\n"
+        f"{behaviour.get('emotional_triggers', '').strip()}\n\n"
+        "SOCIAL AND IDENTITY CUES\n"
+        f"{behaviour.get('social_and_identity_cues', '').strip()}\n\n"
+        "MOTIVATION AND ACTION SIGNALS\n"
+        f"{behaviour.get('motivation_and_action_signals', '').strip()}\n\n"
+        "OVERALL BEHAVIOURAL INTERPRETATION\n"
+        f"{behaviour.get('overall_behavioural_interpretation', '').strip()}"
+    )
+
+# ---------------- LLM ANALYSIS (UNCHANGED PROMPT) ----------------
 
 def analyze_article(text):
     prompt = f"""
@@ -330,16 +357,17 @@ def main():
             composite_score = compute_composite_ideology(framing, intensity, content)
             political_leaning = derive_political_leaning(framing, econ_score)
 
+            formatted_bias = format_bias_explanation(analysis["bias_explanation"])
+            formatted_behaviour = format_behavioural_analysis(analysis["behavioural_analysis"])
+
             update_record(article["id"], {
                 "Composite Ideology Score": composite_score,
                 "Political Leaning": political_leaning,
                 "Sentiment": sentiment_label,
                 "Topic": analysis["topic"],
-                "Bias Explanation": json.dumps(analysis["bias_explanation"]),
-                "Behavioural Analysis": json.dumps(analysis["behavioural_analysis"]),
+                "Bias Explanation": formatted_bias,
+                "Behavioural Analysis": formatted_behaviour,
                 "Processed": True,
-
-                # 🆕 AI COMPONENT FIELDS (only additions)
                 "AI Framing Direction": framing,
                 "AI Language Intensity": intensity,
                 "AI Sensationalism": sensational,
