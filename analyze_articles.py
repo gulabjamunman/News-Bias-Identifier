@@ -48,30 +48,40 @@ def strip_boilerplate(text):
             text = text.split(marker)[0]
     return text
 
+def contains_devanagari(text):
+    return any('\u0900' <= c <= '\u097F' for c in text)
+
 def normalize_news_article(text):
     lines = text.split("\n")
     cleaned_lines = []
 
     for line in lines:
         line = line.strip()
+        if not line:
+            continue
 
         if any(x in line for x in [
             "Curated By", "Updated:", "Published:", "Last Updated",
-            "Follow us", "Subscribe", "Watch:", "Advertisement",
-            "नई दिल्ली:", "लाइव अपडेट", "Breaking News"
+            "Follow us", "Subscribe", "Watch:", "Advertisement"
         ]):
             continue
 
-        if line.lower().startswith("photo") or line.lower().startswith("image"):
+        if line.lower().startswith(("photo", "image")):
             continue
 
-        if "pic.twitter.com" in line or ("http" in line and "twitter" in line):
+        if "pic.twitter.com" in line:
             continue
 
-        if line.isupper() and len(line.split()) < 12:
+        words = line.split()
+
+        # keep short Hindi sentences
+        if len(words) < 4:
+            if contains_devanagari(line):
+                cleaned_lines.append(line)
             continue
 
-        if len(line.split()) < 6:
+        # soften uppercase removal
+        if line.isupper() and len(words) < 8:
             continue
 
         cleaned_lines.append(line)
@@ -80,7 +90,7 @@ def normalize_news_article(text):
     return re.sub(r"\s+", " ", article_body).strip()
 
 def is_probably_hindi(text):
-    return any('\u0900' <= c <= '\u097F' for c in text)
+    return contains_devanagari(text)
 
 # ---------------- LEXICON CACHING ----------------
 
@@ -201,7 +211,7 @@ def derive_political_leaning(framing, econ_score):
         return "Left"
     return "Neutral"
 
-# ---------------- NEW FORMATTING HELPERS ----------------
+# ---------------- FORMATTING HELPERS ----------------
 
 def format_bias_explanation(bias):
     return (
@@ -278,27 +288,27 @@ OUTPUT FORMAT
 
 Return ONLY valid JSON with this structure:
 
-{{
+{
   "framing_direction": number,
   "language_intensity": number,
   "sensationalism_score": number,
   "topic": "1-3 word topic label",
 
-  "bias_explanation": {{
+  "bias_explanation": {
       "framing_reason": "",
       "intensity_reason": "",
       "sensationalism_reason": "",
       "overall_interpretation": ""
-  }},
+  },
 
-  "behavioural_analysis": {{
+  "behavioural_analysis": {
       "attention_and_salience": "",
       "emotional_triggers": "",
       "social_and_identity_cues": "",
       "motivation_and_action_signals": "",
       "overall_behavioural_interpretation": ""
-  }}
-}}
+  }
+}
 
 Article:
 {text[:4000]}
@@ -338,7 +348,10 @@ def main():
         raw_content = article["fields"].get("Content", "")
         content = normalize_news_article(strip_boilerplate(clean_text(raw_content)))
 
-        if len(WORD_PATTERN.findall(content)) < 40:
+        word_count = len(WORD_PATTERN.findall(content))
+        char_count = len(content)
+
+        if word_count < 40 and char_count < 250:
             continue
 
         try:
@@ -357,16 +370,13 @@ def main():
             composite_score = compute_composite_ideology(framing, intensity, content)
             political_leaning = derive_political_leaning(framing, econ_score)
 
-            formatted_bias = format_bias_explanation(analysis["bias_explanation"])
-            formatted_behaviour = format_behavioural_analysis(analysis["behavioural_analysis"])
-
             update_record(article["id"], {
                 "Composite Ideology Score": composite_score,
                 "Political Leaning": political_leaning,
                 "Sentiment": sentiment_label,
                 "Topic": analysis["topic"],
-                "Bias Explanation": formatted_bias,
-                "Behavioural Analysis": formatted_behaviour,
+                "Bias Explanation": format_bias_explanation(analysis["bias_explanation"]),
+                "Behavioural Analysis": format_behavioural_analysis(analysis["behavioural_analysis"]),
                 "Processed": True,
                 "AI Framing Direction": framing,
                 "AI Language Intensity": intensity,
