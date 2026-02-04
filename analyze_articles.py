@@ -288,27 +288,27 @@ OUTPUT FORMAT
 
 Return ONLY valid JSON with this structure:
 
-{
+{{
   "framing_direction": number,
   "language_intensity": number,
   "sensationalism_score": number,
   "topic": "1-3 word topic label",
 
-  "bias_explanation": {
+  "bias_explanation": {{
       "framing_reason": "",
       "intensity_reason": "",
       "sensationalism_reason": "",
       "overall_interpretation": ""
-  },
+  }},
 
-  "behavioural_analysis": {
+  "behavioural_analysis": {{
       "attention_and_salience": "",
       "emotional_triggers": "",
       "social_and_identity_cues": "",
       "motivation_and_action_signals": "",
       "overall_behavioural_interpretation": ""
-  }
-}
+  }}
+}}
 
 Article:
 {text[:4000]}
