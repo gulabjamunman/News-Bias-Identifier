@@ -36,7 +36,6 @@ def clean_text(text):
     text = re.sub(r"\r", "\n", text)
     return text.strip()
 
-
 def strip_boilerplate(text):
     cut_markers = [
         "First Published:", "Last Updated:", "Newsletter",
@@ -48,7 +47,6 @@ def strip_boilerplate(text):
         if marker in text:
             text = text.split(marker)[0]
     return text
-
 
 def normalize_news_article(text):
     lines = text.split("\n")
@@ -80,7 +78,6 @@ def normalize_news_article(text):
 
     article_body = " ".join(cleaned_lines)
     return re.sub(r"\s+", " ", article_body).strip()
-
 
 def is_probably_hindi(text):
     return any('\u0900' <= c <= '\u097F' for c in text)
@@ -132,7 +129,6 @@ def build_lexicons():
 
     return LM_NEGATIVE, LM_UNCERTAINTY, EMOLEX, BWS_LEXICON
 
-
 def load_or_build_lexicons():
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "rb") as f:
@@ -142,14 +138,12 @@ def load_or_build_lexicons():
         pickle.dump(lexicons, f)
     return lexicons
 
-
 LM_NEGATIVE, LM_UNCERTAINTY, EMOLEX, BWS_LEXICON = load_or_build_lexicons()
 
 # ---------------- SCORING FUNCTIONS ----------------
 
 def vader_emotional_score(text):
     return sia.polarity_scores(text)["compound"]
-
 
 def derive_sentiment_label(text):
     score = vader_emotional_score(text)
@@ -159,14 +153,12 @@ def derive_sentiment_label(text):
         return "Negative"
     return "Neutral"
 
-
 def economic_risk_score(text):
     words = WORD_PATTERN.findall(text.lower())
     total = len(words) or 1
     neg = sum(1 for w in words if w in LM_NEGATIVE)
     unc = sum(1 for w in words if w in LM_UNCERTAINTY)
     return (neg + 1.5 * unc) / total
-
 
 def emotion_profile(text):
     words = WORD_PATTERN.findall(text.lower())
@@ -179,12 +171,15 @@ def emotion_profile(text):
     total = sum(emotions.values()) or 1
     return {k: v / total for k, v in emotions.items()}
 
-
 def bws_intensity_score(text):
     words = WORD_PATTERN.findall(text.lower())
     total = len(words) or 1
     return sum(BWS_LEXICON.get(w, 0) for w in words) / total
 
+# 🆕 NEW helper (only addition here)
+def threat_signal_score(text):
+    emotions = emotion_profile(text)
+    return emotions["anger"] + emotions["fear"] + emotions["disgust"]
 
 def compute_composite_ideology(framing, intensity, text):
     vader_score = vader_emotional_score(text)
@@ -198,7 +193,6 @@ def compute_composite_ideology(framing, intensity, text):
     threat_mult = 1 + (emotions["anger"] + emotions["fear"] + emotions["disgust"]) * 2 - emotions["trust"]
 
     return base * emotional_mult * economic_mult * threat_mult * (1 + bws_score)
-
 
 def derive_political_leaning(framing, econ_score):
     adjusted = framing + (econ_score * 0.5)
@@ -290,26 +284,6 @@ Article:
     )
     return json.loads(response.choices[0].message.content)
 
-# ---------------- FORMATTERS ----------------
-
-def format_bias_explanation(e):
-    return (
-        f"Framing: {e.get('framing_reason','')}\n\n"
-        f"Language Intensity: {e.get('intensity_reason','')}\n\n"
-        f"Sensationalism: {e.get('sensationalism_reason','')}\n\n"
-        f"Overall Interpretation: {e.get('overall_interpretation','')}"
-    )
-
-
-def format_behavioural_explanation(b):
-    return (
-        f"Attention & Salience: {b.get('attention_and_salience','')}\n\n"
-        f"Emotional Triggers: {b.get('emotional_triggers','')}\n\n"
-        f"Social & Identity Cues: {b.get('social_and_identity_cues','')}\n\n"
-        f"Motivation Signals: {b.get('motivation_and_action_signals','')}\n\n"
-        f"Overall Behavioural Interpretation: {b.get('overall_behavioural_interpretation','')}"
-    )
-
 # ---------------- AIRTABLE ----------------
 
 def get_unprocessed_articles():
@@ -323,7 +297,6 @@ def get_unprocessed_articles():
         if not offset:
             break
     return [r for r in records if not r["fields"].get("Processed")]
-
 
 def update_record(record_id, fields):
     requests.patch(f"{AIRTABLE_URL}/{record_id}", headers=HEADERS, json={"fields": fields})
@@ -343,18 +316,16 @@ def main():
 
         try:
             analysis = analyze_article(content)
-            formatted_bias = format_bias_explanation(analysis["bias_explanation"])
-            formatted_behaviour = format_behavioural_explanation(analysis["behavioural_analysis"])
 
             framing = analysis["framing_direction"]
             intensity = analysis["language_intensity"]
+            sensational = analysis["sensationalism_score"]
 
-            if is_probably_hindi(content):
-                sentiment_label = "Neutral"
-                econ_score = 0
-            else:
-                sentiment_label = derive_sentiment_label(content)
-                econ_score = economic_risk_score(content)
+            ai_threat = threat_signal_score(content)
+            ai_lex_intensity = bws_intensity_score(content)
+
+            sentiment_label = "Neutral" if is_probably_hindi(content) else derive_sentiment_label(content)
+            econ_score = 0 if is_probably_hindi(content) else economic_risk_score(content)
 
             composite_score = compute_composite_ideology(framing, intensity, content)
             political_leaning = derive_political_leaning(framing, econ_score)
@@ -364,16 +335,22 @@ def main():
                 "Political Leaning": political_leaning,
                 "Sentiment": sentiment_label,
                 "Topic": analysis["topic"],
-                "Bias Explanation": formatted_bias,
-                "Behavioural Analysis": formatted_behaviour,
-                "Processed": True
+                "Bias Explanation": json.dumps(analysis["bias_explanation"]),
+                "Behavioural Analysis": json.dumps(analysis["behavioural_analysis"]),
+                "Processed": True,
+
+                # 🆕 AI COMPONENT FIELDS (only additions)
+                "AI Framing Direction": framing,
+                "AI Language Intensity": intensity,
+                "AI Sensationalism": sensational,
+                "AI Threat Signal": ai_threat,
+                "AI Lexical Emotional Intensity": ai_lex_intensity
             })
 
             print(f"Processed: {headline}")
 
         except Exception as e:
             print(f"Failed: {headline}", e)
-
 
 if __name__ == "__main__":
     main()
