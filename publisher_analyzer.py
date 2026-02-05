@@ -1,6 +1,8 @@
 import os
 import requests
 import re
+from collections import defaultdict
+publisher_stats = defaultdict(lambda: {"seen": 0, "processed": 0, "skipped": 0})
 from your_existing_analyzer_filename import (
     analyze_article,
     threat_signal_score,
@@ -78,6 +80,7 @@ def main():
     for article in articles:
         headline = article["fields"].get("Headline", "Untitled")
         publisher = article["fields"].get("Publisher Name", "")
+        publisher_stats[publisher]["seen"] += 1
         raw_content = article["fields"].get("Content", "")
 
         if publisher in ["News18", "ABP India"]:
@@ -91,6 +94,7 @@ def main():
         char_count = len(content)
 
         if word_count < 40 and char_count < 250:
+            publisher_stats[publisher]["skipped"] += 1
             continue
 
         analysis = analyze_article(content)
@@ -122,8 +126,13 @@ def main():
             "AI Threat Signal": ai_threat,
             "AI Lexical Emotional Intensity": ai_lex_intensity
         })
-
+        publisher_stats[publisher]["processed"] += 1
         print("Processed:", headline)
 
 if __name__ == "__main__":
     main()
+
+    print("\nProcessing Summary")
+    print("------------------")
+    for pub, stats in publisher_stats.items():
+        print(f"{pub:15} Seen: {stats['seen']:3}  Processed: {stats['processed']:3}  Skipped: {stats['skipped']:3}")
