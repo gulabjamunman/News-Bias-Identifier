@@ -29,6 +29,37 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 CACHE_FILE = "lexicon_cache.pkl"
 WORD_PATTERN = re.compile(r"\w+", re.UNICODE)
 
+# ---------------- PUBLISHER-SPECIFIC CLEANERS (NEW) ----------------
+
+def clean_generic(text):
+    return re.sub(r"\s+", " ", text).strip()
+
+def clean_live_style(text):
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if "Updated:" in line or "LIVE" in line:
+            continue
+        if len(line.split()) < 3:
+            continue
+        cleaned.append(line)
+    return " ".join(cleaned)
+
+def clean_hindi_shortform(text):
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        if "विज्ञापन" in line:
+            continue
+        cleaned.append(line)
+    return " ".join(cleaned)
+
 # ---------------- TEXT CLEANING ----------------
 
 def clean_text(text):
@@ -74,13 +105,11 @@ def normalize_news_article(text):
 
         words = line.split()
 
-        # keep short Hindi sentences
         if len(words) < 4:
             if contains_devanagari(line):
                 cleaned_lines.append(line)
             continue
 
-        # soften uppercase removal
         if line.isupper() and len(words) < 8:
             continue
 
@@ -239,7 +268,7 @@ def format_behavioural_analysis(behaviour):
         f"{behaviour.get('overall_behavioural_interpretation', '').strip()}"
     )
 
-# ---------------- LLM ANALYSIS (UNCHANGED PROMPT) ----------------
+# ---------------- LLM ANALYSIS ----------------
 
 def analyze_article(text):
     prompt = f"""
@@ -345,8 +374,15 @@ def main():
 
     for article in articles:
         headline = article["fields"].get("Headline", "Untitled")
+        publisher = article["fields"].get("Publisher Name", "")
         raw_content = article["fields"].get("Content", "")
-        content = normalize_news_article(strip_boilerplate(clean_text(raw_content)))
+
+        if publisher in ["News18", "ABP India"]:
+            content = clean_live_style(raw_content)
+        elif any('\u0900' <= c <= '\u097F' for c in raw_content):
+            content = clean_hindi_shortform(raw_content)
+        else:
+            content = clean_generic(raw_content)
 
         word_count = len(WORD_PATTERN.findall(content))
         char_count = len(content)
